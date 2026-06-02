@@ -117,39 +117,21 @@
 
 int main()
 {
-    ThreadPool pool(2, 16);
+    ThreadPool pool(2, 8);
 
-    constexpr int TASK_COUNT = 1000;
-
-    auto start =
-        std::chrono::steady_clock::now();
-
-    for (int i = 0; i < TASK_COUNT; ++i)
+    for(int i = 0; i < 100; ++i)
     {
-        pool.submit([]
-                    { std::this_thread::sleep_for(
-                          std::chrono::milliseconds(100)); });
+        pool.submit([]{
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(100));
+        });
     }
 
-    while (pool.pending_tasks() > 0)
+    while(true)
     {
         pool.dump_status();
 
         std::this_thread::sleep_for(
             std::chrono::seconds(1));
     }
-
-    auto end =
-        std::chrono::steady_clock::now();
-
-    auto cost =
-        std::chrono::duration_cast<
-            std::chrono::milliseconds>(
-            end - start);
-
-    std::cout
-        << "cost="
-        << cost.count()
-        << " ms"
-        << std::endl;
 }

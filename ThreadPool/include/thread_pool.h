@@ -21,14 +21,21 @@
 class ThreadPool{
 public:
     using Task = std::function<void()>;
+    using Clock = std::chrono::steady_clock;
 
 private:
     struct WorkerInfo{
         std::thread worker;
         std::atomic<bool> idle{true}; // 是否空闲
         std::atomic<bool> exit{false}; // 是否退出
+        std::atomic<bool> stopped{false}; // 正式退出
+        Clock::time_point last_active;
 
-        WorkerInfo() = default;
+        WorkerInfo()
+        :last_active(Clock::now())
+        {}
+
+        ~WorkerInfo() = default;
     };
 
 private:
@@ -38,21 +45,22 @@ private:
     std::vector<std::unique_ptr<WorkerInfo>> _workers; // 工作线程
     std::thread _manager; // 监控线程池线程
     mutable std::mutex _mutex; // 保护任务队列[const函数中支持最小修改]
+    mutable std::mutex _worker_mutex; // 保护工作线程统计[const函数中支持最小修改]
     std::condition_variable _cv; // 条件变量，线程同步
-    bool _stop{false}; // 线程池停止标记[确保在锁内操作]
+    std::atomic<bool> _stop{false}; // 线程池停止标记[确保在锁内操作]
 
 private:
     // 工作线程执行的函数
     void work(WorkerInfo* worker);
 
     // 检查是否需要扩容
-    bool check_expand();
+    bool check_expand() const;
 
     // 扩容
     void expand();
 
     // 检查是否需要缩容
-    bool check_shrink();
+    bool check_shrink() const;
 
     // 缩容
     void shrink();
@@ -62,6 +70,12 @@ private:
 
     // 添加工作线程
     void add_worker(size_t n);
+
+    // 清理每次扩缩容之后退出的线程
+    void clean_worker();
+    
+    // 超时缩容
+    bool timeout_shrink(const WorkerInfo* worker) const;
 
 public:
     ThreadPool(size_t min_threads, size_t max_threads);

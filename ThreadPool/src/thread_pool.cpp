@@ -14,10 +14,12 @@ void ThreadPool::work(WorkerInfo* worker){
 
             // 调度结束并且任务全部完成才退出循环
             if(_stop && _tasks.empty()){
+                worker->stopped = true;
                 return;
             }
 
             if(worker->exit){
+                worker->stopped = true;
                 return;
             }
 
@@ -36,11 +38,14 @@ void ThreadPool::work(WorkerInfo* worker){
             std::cout << "未知异常" << std::endl;
         }
         worker->idle = true; // 恢复空闲状态
+        // 更新最后活跃时刻
+        worker->last_active = ThreadPool::Clock::now();
     }
 }
 
 // 添加工作线程
 void ThreadPool::add_worker(size_t n){
+    std::lock_guard<std::mutex> lock(_worker_mutex);
     for(size_t i = 0; i < n; ++i){
         auto worker = std::make_unique<WorkerInfo>();
         WorkerInfo* ptr = worker.get();
@@ -50,7 +55,7 @@ void ThreadPool::add_worker(size_t n){
 }
 
 // 检查是否需要扩容
-bool ThreadPool::check_expand(){
+bool ThreadPool::check_expand() const{
     return pending_tasks() > active_threads()
         && thread_count() < _max_threads;
 }
@@ -64,10 +69,18 @@ void ThreadPool::expand(){
 }
 
 // 检查是否需要缩容
-bool ThreadPool::check_shrink(){
-    return pending_tasks() == 0
-        && active_threads() == 0
-        && thread_count() > _min_threads;
+bool ThreadPool::check_shrink() const{
+    return thread_count() > _min_threads;
+}
+
+// 超时空闲缩容
+bool ThreadPool::timeout_shrink(const WorkerInfo* worker) const{
+    using namespace std::chrono;
+
+    auto now = ThreadPool::Clock::now();
+    auto gap = duration_cast<seconds>(now - worker->last_active); // 空闲时间差
+    
+    return gap.count() >= 10;
 }
 
 // 缩容[一次减少1个]
@@ -75,11 +88,30 @@ void ThreadPool::shrink(){
     if(!check_shrink())
         return;
 
+    std::lock_guard<std::mutex> lock(_worker_mutex);
     for(auto& worker : _workers){
-        if(worker->idle && !worker->exit){
+        if(worker->idle && !worker->exit && timeout_shrink(worker.get())){
             worker->exit = true;
             _cv.notify_all(); // 防止其他线程都在wait
             break;
+        }
+    }
+}
+
+// 清理每次扩缩容之后退出的线程
+void ThreadPool::clean_worker(){
+    std::lock_guard<std::mutex> lock(_worker_mutex);
+    auto it = _workers.begin();
+    while(it != _workers.end()){
+        auto& worker = *it;
+        if(worker->stopped){
+            if(worker->worker.joinable()){
+                worker->worker.join();
+            }
+            it = _workers.erase(it);
+        }
+        else{
+            ++it;
         }
     }
 }
@@ -89,6 +121,7 @@ void ThreadPool::manager(){
     while(!_stop){
         expand();
         shrink();
+        clean_worker();
         // 每隔50ms检查一次
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
@@ -104,19 +137,13 @@ ThreadPool::ThreadPool(size_t min_threads, size_t max_threads)
 
 // 线程总数
 size_t ThreadPool::thread_count() const{
-    std::lock_guard lock(_mutex);
-    size_t count = 0;
-    for(auto &worker : _workers){
-        if(!worker->exit){
-            ++count;
-        }
-    }
-    return count;  
+    std::lock_guard<std::mutex> lock(_worker_mutex);
+    return _workers.size();  
 }
 
 // 活跃线程数
 size_t ThreadPool::active_threads() const{
-    std::lock_guard lock(_mutex);
+    std::lock_guard<std::mutex> lock(_worker_mutex);
     size_t count = 0;
     for(auto &worker : _workers){
         if(!worker->idle){
@@ -148,10 +175,7 @@ void ThreadPool::dump_status() const{
 }
 
 ThreadPool::~ThreadPool(){
-    {
-        std::unique_lock<std::mutex> lock(_mutex);
-        _stop = true;
-    }
+    _stop = true;
 
     _cv.notify_all(); // 唤醒所有线程
 
