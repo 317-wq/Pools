@@ -14,6 +14,8 @@
 #include <future>
 #include <type_traits>
 #include <stdexcept>
+#include <atomic>
+#include <iostream>
 
 class ThreadPool{
 public:
@@ -22,9 +24,10 @@ public:
 private:
     std::queue<Task> _tasks; // 任务队列[多线程共享这个资源]
     std::vector<std::thread> _workers; // 工作线程
-    std::mutex _mutex; // 保护任务队列
+    mutable std::mutex _mutex; // 保护任务队列[const函数中支持最小修改]
     std::condition_variable _cv; // 条件变量，线程同步
     bool _stop{false}; // 线程池停止标记[确保在锁内操作]
+    std::atomic<size_t> _active_threads{0}; // 活跃线程数[正在执行任务]
 
 private:
     // 工作线程执行的函数
@@ -63,6 +66,18 @@ public:
 
         return future;
     }
+
+    // 线程总数
+    size_t thread_count() const;
+
+    // 活跃线程数
+    size_t active_threads() const;
+
+    // 待完成的任务数量
+    size_t pending_tasks() const;
+
+    // 打印线程池状态
+    void dump_status() const;
 
     ~ThreadPool();
 };

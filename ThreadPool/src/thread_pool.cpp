@@ -20,16 +20,57 @@ void ThreadPool::work(){
             task = std::move(_tasks.front());
             _tasks.pop();
         }
-        task(); // 任务执行
+
+        ++_active_threads;
+
+        try{
+            task(); // 任务执行
+        }catch(const std::exception& e){
+            std::cout << e.what() << std::endl;
+        }catch(...){
+            std::cout << "未知异常" << std::endl;
+        }
+
+        // TODO:
+        // 当前实现依赖于控制流正常走到这里。
+        // 后续可使用 RAII(ScopeGuard)管理 _active_threads。
+        // 即使未来出现 return / 新异常路径，也能保证计数正确恢复。
+        --_active_threads;
     }
 }
 
 ThreadPool::ThreadPool(size_t thread_num){
-    for(int i = 0; i < thread_num; ++i){
+    for(size_t i = 0; i < thread_num; ++i){
         _workers.emplace_back([this]{
             work();
         });
     }
+}
+
+// 线程总数
+size_t ThreadPool::thread_count() const{
+    return _workers.size();
+}
+
+// 活跃线程数
+size_t ThreadPool::active_threads() const{
+    return _active_threads.load();
+}
+
+// 待完成的任务数量
+size_t ThreadPool::pending_tasks() const{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _tasks.size();
+}
+
+// 打印线程池状态
+void ThreadPool::dump_status() const{
+    std::cout
+        << "[ThreadPool] "
+        << "threads=" << thread_count()
+        << " active=" << active_threads()
+        << " pending=" << pending_tasks()
+        << std::endl;
 }
 
 ThreadPool::~ThreadPool(){
