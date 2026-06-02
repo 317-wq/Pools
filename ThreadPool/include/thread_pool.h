@@ -17,6 +17,7 @@
 #include <atomic>
 #include <iostream>
 #include <chrono>
+#include <deque>
 
 class ThreadPool{
 public:
@@ -26,6 +27,8 @@ public:
 private:
     struct WorkerInfo{
         std::thread worker;
+        std::deque<Task> tasks; // 尾部进行任务的steal
+        std::mutex mutex; // 保护任务队列
         std::atomic<bool> idle{true}; // 是否空闲
         std::atomic<bool> exit{false}; // 是否退出
         std::atomic<bool> stopped{false}; // 正式退出
@@ -41,8 +44,8 @@ private:
 private:
     size_t _min_threads; // 最少线程数
     size_t _max_threads; // 最大线程数
-    std::queue<Task> _tasks; // 任务队列[多线程共享这个资源]
     std::vector<std::unique_ptr<WorkerInfo>> _workers; // 工作线程
+    std::atomic<size_t> _next_worker{0}; // 负载均衡[下一个工作对象的下标]
     std::thread _manager; // 监控线程池线程
     mutable std::mutex _mutex; // 保护任务队列[const函数中支持最小修改]
     mutable std::mutex _worker_mutex; // 保护工作线程统计[const函数中支持最小修改]
@@ -77,6 +80,9 @@ private:
     // 超时缩容
     bool timeout_shrink(const WorkerInfo* worker) const;
 
+    // 偷取其他线程的任务
+    bool steal_task(WorkerInfo* self, Task& task);
+
 public:
     ThreadPool(size_t min_threads, size_t max_threads);
     
@@ -97,14 +103,17 @@ public:
         
         std::future<ReturnType> future = task->get_future();
 
+        // 应该将当前任务放到哪一个worker对象里面
+        size_t idx = _next_worker++ % _workers.size();
+        auto &worker = _workers[idx];
         {
-            std::lock_guard<std::mutex> lock(_mutex);
+            std::lock_guard<std::mutex> lock(worker->mutex);
 
             if(_stop){
                 throw std::runtime_error("submit on stopped ThreadPool");
             }
 
-            _tasks.emplace([task]{
+            worker->tasks.emplace_back([task]{
                 (*task)();
             });
         }

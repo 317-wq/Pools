@@ -6,29 +6,38 @@ void ThreadPool::work(WorkerInfo* worker){
         Task task;
         // 取任务逻辑
         {
-            std::unique_lock<std::mutex> lock(_mutex);
+            std::unique_lock<std::mutex> lock(worker->mutex);
 
             _cv.wait(lock, [this, worker]{
-                return !_tasks.empty() || _stop || worker->exit;
+                return !worker->tasks.empty() || _stop || worker->exit;
             });
 
             // 调度结束并且任务全部完成才退出循环
-            if(_stop && _tasks.empty()){
+            if(_stop && worker->tasks.empty()){
                 worker->stopped = true;
                 return;
             }
 
-            if(worker->exit){
+            // 防止任务丢失
+            if(worker->exit && worker->tasks.empty()){
                 worker->stopped = true;
                 return;
             }
 
-            if(!_tasks.empty()){
-                task = std::move(_tasks.front());
-                _tasks.pop();
+            // task取出的任务不为空，后续执行自己的就行了
+            if(!worker->tasks.empty()){
+                task = std::move(worker->tasks.front());
+                worker->tasks.pop_front();
             }
         }
-        
+
+        // task为空，去steal别人的任务来执行
+        if(!task){
+            if(!steal_task(worker, task)){
+                continue;
+            }
+        }
+
         worker->idle = false; // 非空闲
         try{
             task(); // 任务执行
@@ -37,10 +46,36 @@ void ThreadPool::work(WorkerInfo* worker){
         }catch(...){
             std::cout << "未知异常" << std::endl;
         }
-        worker->idle = true; // 恢复空闲状态
         // 更新最后活跃时刻
         worker->last_active = ThreadPool::Clock::now();
+        worker->idle = true; // 恢复空闲状态
     }
+}
+
+// 偷取其他线程的任务[不负责执行]
+bool ThreadPool::steal_task(WorkerInfo *self, Task &task){
+    std::vector<WorkerInfo*> workers;
+    for(auto& worker : _workers){
+        std::lock_guard<std::mutex> lock(_worker_mutex);
+        for(auto& worker : _workers){
+            workers.push_back(worker.get());
+        }
+    }
+
+    for(auto& worker : workers){
+        if(worker == self){
+            continue;
+        }
+        // 锁的对象应该是被偷的对象，被偷的对象此时不能进行查询操作那些
+        std::lock_guard<std::mutex> glock(worker->mutex);
+        if(worker->tasks.empty()){
+            continue;
+        }
+        task = std::move(worker->tasks.back());
+        worker->tasks.pop_back();
+        return true;
+    }
+    return false;
 }
 
 // 添加工作线程
@@ -70,7 +105,8 @@ void ThreadPool::expand(){
 
 // 检查是否需要缩容
 bool ThreadPool::check_shrink() const{
-    return thread_count() > _min_threads;
+    return idle_threads() > 0 
+        && thread_count() > _min_threads;
 }
 
 // 超时空闲缩容
@@ -87,7 +123,9 @@ bool ThreadPool::timeout_shrink(const WorkerInfo* worker) const{
 void ThreadPool::shrink(){
     if(!check_shrink())
         return;
-
+    // 至少保留最少个数
+    if(thread_count() <= _min_threads)
+        return;
     std::lock_guard<std::mutex> lock(_worker_mutex);
     for(auto& worker : _workers){
         if(worker->idle && !worker->exit && timeout_shrink(worker.get())){
@@ -160,8 +198,13 @@ size_t ThreadPool::idle_threads() const{
 
 // 待完成的任务数量
 size_t ThreadPool::pending_tasks() const{
-    std::lock_guard<std::mutex> lock(_mutex);
-    return _tasks.size();
+    std::lock_guard<std::mutex> lock(_worker_mutex);
+    size_t count = 0;
+    for(auto& worker : _workers){
+        std::lock_guard<std::mutex> glock(worker->mutex);
+        count += worker->tasks.size();
+    }
+    return count;
 }
 
 // 打印线程池状态
