@@ -23,21 +23,27 @@ public:
     using Task = std::function<void()>;
 
 private:
+    struct WorkerInfo{
+        std::thread worker;
+        std::atomic<bool> idle{true}; // 是否空闲
+        std::atomic<bool> exit{false}; // 是否退出
+
+        WorkerInfo() = default;
+    };
+
+private:
     size_t _min_threads; // 最少线程数
     size_t _max_threads; // 最大线程数
     std::queue<Task> _tasks; // 任务队列[多线程共享这个资源]
-    std::vector<std::thread> _workers; // 工作线程
+    std::vector<std::unique_ptr<WorkerInfo>> _workers; // 工作线程
     std::thread _manager; // 监控线程池线程
     mutable std::mutex _mutex; // 保护任务队列[const函数中支持最小修改]
     std::condition_variable _cv; // 条件变量，线程同步
     bool _stop{false}; // 线程池停止标记[确保在锁内操作]
-    std::atomic<size_t> _active_threads{0}; // 活跃线程数[正在执行任务]
-    std::atomic<size_t> _current_threads{0}; // 当前[启动]线程数量
-    std::atomic<size_t> _threads_to_exit{0}; // [待]退出线程数量
 
 private:
     // 工作线程执行的函数
-    void work();
+    void work(WorkerInfo* worker);
 
     // 检查是否需要扩容
     bool check_expand();
@@ -62,7 +68,10 @@ public:
     
     ThreadPool(const ThreadPool&) = delete;
     ThreadPool& operator=(const ThreadPool&) = delete;
+    
+    ~ThreadPool();
 
+public:
     // 提交任务->自动推导返回值(支持多种可调用对象)
     template<typename F, typename... Args>
     auto submit(F&& f, Args&&... args) -> std::future<std::invoke_result_t<F, Args...>>{
@@ -91,17 +100,19 @@ public:
         return future;
     }
 
+public:
     // 线程总数
     size_t thread_count() const;
 
     // 活跃线程数
     size_t active_threads() const;
 
+    // 空闲线程数
+    size_t idle_threads() const;
+
     // 待完成的任务数量
     size_t pending_tasks() const;
 
     // 打印线程池状态
     void dump_status() const;
-
-    ~ThreadPool();
 };

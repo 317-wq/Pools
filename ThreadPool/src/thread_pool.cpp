@@ -1,38 +1,33 @@
 #include "../include/thread_pool.h"
 
 // 工作线程执行[生产消费模型]
-void ThreadPool::work(){
+void ThreadPool::work(WorkerInfo* worker){
     while(true){
         Task task;
         // 取任务逻辑
         {
             std::unique_lock<std::mutex> lock(_mutex);
 
-            _cv.wait(lock, [this]{
-                return !_tasks.empty() || _stop || _threads_to_exit > 0;
+            _cv.wait(lock, [this, worker]{
+                return !_tasks.empty() || _stop || worker->exit;
             });
 
             // 调度结束并且任务全部完成才退出循环
             if(_stop && _tasks.empty()){
-                --_current_threads;
                 return;
             }
 
-            if(_threads_to_exit > 0 && _current_threads > _min_threads && _tasks.empty()){
-                --_threads_to_exit;
-                --_current_threads;
+            if(worker->exit){
                 return;
             }
 
-            if(_tasks.empty()){
-                continue; // 完成正在进行的任务
+            if(!_tasks.empty()){
+                task = std::move(_tasks.front());
+                _tasks.pop();
             }
-            task = std::move(_tasks.front());
-            _tasks.pop();
         }
-
-        ++_active_threads;
-
+        
+        worker->idle = false; // 非空闲
         try{
             task(); // 任务执行
         }catch(const std::exception& e){
@@ -40,32 +35,27 @@ void ThreadPool::work(){
         }catch(...){
             std::cout << "未知异常" << std::endl;
         }
-
-        // TODO:
-        // 当前实现依赖于控制流正常走到这里。
-        // 后续可使用 RAII(ScopeGuard)管理 _active_threads。
-        // 即使未来出现 return / 新异常路径，也能保证计数正确恢复。
-        --_active_threads;
+        worker->idle = true; // 恢复空闲状态
     }
 }
 
 // 添加工作线程
 void ThreadPool::add_worker(size_t n){
     for(size_t i = 0; i < n; ++i){
-        _workers.emplace_back([this]{
-            work();
-        });
-        ++_current_threads;
+        auto worker = std::make_unique<WorkerInfo>();
+        WorkerInfo* ptr = worker.get();
+        ptr->worker = std::thread(&ThreadPool::work, this, ptr);
+        _workers.emplace_back(std::move(worker));
     }
 }
 
 // 检查是否需要扩容
 bool ThreadPool::check_expand(){
-    return (pending_tasks() > active_threads())
-            && (thread_count() < _max_threads);
+    return pending_tasks() > active_threads()
+        && thread_count() < _max_threads;
 }
 
-// 扩容
+// 扩容[一次增加1个]
 void ThreadPool::expand(){
     if(!check_expand())
         return;
@@ -80,12 +70,18 @@ bool ThreadPool::check_shrink(){
         && thread_count() > _min_threads;
 }
 
-// 缩容
+// 缩容[一次减少1个]
 void ThreadPool::shrink(){
     if(!check_shrink())
         return;
-    ++_threads_to_exit;
-    _cv.notify_all();
+
+    for(auto& worker : _workers){
+        if(worker->idle && !worker->exit){
+            worker->exit = true;
+            _cv.notify_all(); // 防止其他线程都在wait
+            break;
+        }
+    }
 }
 
 // 核心：扩容，缩容
@@ -93,8 +89,8 @@ void ThreadPool::manager(){
     while(!_stop){
         expand();
         shrink();
-        // 每隔1秒检查一次
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+        // 每隔50ms检查一次
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 }
 
@@ -108,12 +104,31 @@ ThreadPool::ThreadPool(size_t min_threads, size_t max_threads)
 
 // 线程总数
 size_t ThreadPool::thread_count() const{
-    return _current_threads.load();
+    std::lock_guard lock(_mutex);
+    size_t count = 0;
+    for(auto &worker : _workers){
+        if(!worker->exit){
+            ++count;
+        }
+    }
+    return count;  
 }
 
 // 活跃线程数
 size_t ThreadPool::active_threads() const{
-    return _active_threads.load();
+    std::lock_guard lock(_mutex);
+    size_t count = 0;
+    for(auto &worker : _workers){
+        if(!worker->idle){
+            ++count;
+        }
+    }
+    return count;
+}
+
+// 空闲线程数
+size_t ThreadPool::idle_threads() const{
+    return thread_count() - active_threads();
 }
 
 // 待完成的任务数量
@@ -145,8 +160,8 @@ ThreadPool::~ThreadPool(){
     }
 
     for(auto& worker : _workers){
-        if(worker.joinable()){
-            worker.join();
+        if(worker->worker.joinable()){
+            worker->worker.join();
         }
     }
 }
