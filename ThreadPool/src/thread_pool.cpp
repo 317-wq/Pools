@@ -39,8 +39,24 @@ void ThreadPool::work(){
     }
 }
 
-ThreadPool::ThreadPool(size_t thread_num){
-    for(size_t i = 0; i < thread_num; ++i){
+bool ThreadPool::check(){
+
+}
+
+// 核心：扩容，缩容
+void ThreadPool::manager(){
+    while(true){
+        if(check()){
+            // ...
+            ;
+        }
+    }
+}
+
+ThreadPool::ThreadPool(size_t min_thread, size_t max_thread)
+    :_manager(std::thread(manager, this))
+{
+    for(size_t i = 0; i < min_thread; ++i){
         _workers.emplace_back([this]{
             work();
         });
