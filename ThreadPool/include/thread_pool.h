@@ -16,6 +16,7 @@
 #include <stdexcept>
 #include <atomic>
 #include <iostream>
+#include <chrono>
 
 class ThreadPool{
 public:
@@ -26,26 +27,38 @@ private:
     size_t _max_threads; // 最大线程数
     std::queue<Task> _tasks; // 任务队列[多线程共享这个资源]
     std::vector<std::thread> _workers; // 工作线程
+    std::thread _manager; // 监控线程池线程
     mutable std::mutex _mutex; // 保护任务队列[const函数中支持最小修改]
     std::condition_variable _cv; // 条件变量，线程同步
     bool _stop{false}; // 线程池停止标记[确保在锁内操作]
     std::atomic<size_t> _active_threads{0}; // 活跃线程数[正在执行任务]
-    std::thread _manager; // 监控线程池线程
-    std::atomic<size_t> _current_threads; // 当前[启动]线程数量
-    std::atomic<size_t> _threas_to_exit; // [待]退出线程数量
+    std::atomic<size_t> _current_threads{0}; // 当前[启动]线程数量
+    std::atomic<size_t> _threads_to_exit{0}; // [待]退出线程数量
 
 private:
     // 工作线程执行的函数
     void work();
 
-    // 检查线程池状态
-    bool check();
+    // 检查是否需要扩容
+    bool check_expand();
+
+    // 扩容
+    void expand();
+
+    // 检查是否需要缩容
+    bool check_shrink();
+
+    // 缩容
+    void shrink();
 
     // 监控线程执行的函数
     void manager();
 
+    // 添加工作线程
+    void add_worker(size_t n);
+
 public:
-    ThreadPool(size_t min_thread, size_t max_thread);
+    ThreadPool(size_t min_threads, size_t max_threads);
     
     ThreadPool(const ThreadPool&) = delete;
     ThreadPool& operator=(const ThreadPool&) = delete;
