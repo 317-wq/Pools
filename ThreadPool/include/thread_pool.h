@@ -11,6 +11,9 @@
 #include <condition_variable>
 #include <memory>
 #include <queue>
+#include <future>
+#include <type_traits>
+#include <stdexcept>
 
 class ThreadPool{
 public:
@@ -26,12 +29,40 @@ private:
 private:
     // 工作线程执行的函数
     void work();
-    
+
 public:
     explicit ThreadPool(size_t thread_num);
     
-    // 提交任务
-    void submit(Task task);
+    ThreadPool(const ThreadPool&) = delete;
+    ThreadPool& operator=(const ThreadPool&) = delete;
+
+    // 提交任务->自动推导返回值(支持多种可调用对象)
+    template<typename F, typename... Args>
+    auto submit(F&& f, Args&&... args) -> std::future<std::invoke_result_t<F, Args...>>{
+        using ReturnType = std::invoke_result_t<F, Args...>;
+
+        auto task = std::make_shared<std::packaged_task<ReturnType()>>(
+            std::bind(std::forward<F>(f), std::forward<Args>(args)...)
+        );
+        
+        std::future<ReturnType> future = task->get_future();
+
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+
+            if(_stop){
+                throw std::runtime_error("submit on stopped ThreadPool");
+            }
+
+            _tasks.emplace([task]{
+                (*task)();
+            });
+        }
+
+        _cv.notify_one(); // 唤醒任意一个线程
+
+        return future;
+    }
 
     ~ThreadPool();
 };

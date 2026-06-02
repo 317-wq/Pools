@@ -1,32 +1,34 @@
 #include "../include/thread_pool.h"
-
 #include <iostream>
-#include <chrono>
 
 int main()
 {
     ThreadPool pool(4);
-    std::mutex cout_mutex;
-    for (int i = 0; i < 10; ++i)
-    {
-        pool.submit(
-            [i, &cout_mutex]()
-            {
-                {
-                    std::lock_guard<std::mutex> lock(cout_mutex);
+    auto f = pool.submit([](int a, int b){
+        return a * b;
+    }, 10, 20);
+    std::cout << f.get() << std::endl;
+    // std::vector<std::future<int>> futures;
 
-                    std::cout
-                        << "task "
-                        << i
-                        << " running in thread "
-                        << std::this_thread::get_id()
-                        << '\n';
-                }
+    // for (int i = 0; i < 10; i++)
+    // {
+    //     futures.emplace_back(
+    //         pool.submit(
+    //             [i]()
+    //             {
+    //                 std::this_thread::sleep_for(
+    //                     std::chrono::milliseconds(100));
 
-                std::this_thread::sleep_for(
-                    std::chrono::milliseconds(500));
-            });
-    }
+    //                 return i * i;
+    //             }));
+    // }
 
-    return 0;
+    // for (auto& future : futures)
+    // {
+    //     std::cout
+    //         << future.get()
+    //         << " ";
+    // }
+
+    std::cout << std::endl;
 }

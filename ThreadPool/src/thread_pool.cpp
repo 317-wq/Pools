@@ -32,20 +32,13 @@ ThreadPool::ThreadPool(size_t thread_num){
     }
 }
 
-// 提交任务
-void ThreadPool::submit(Task task){
-    {
-        std::unique_lock<std::mutex> lock(_mutex);
-        _tasks.push(std::move(task));
-    }
-    _cv.notify_one(); // 唤醒任意一个工作线程
-}
-
 ThreadPool::~ThreadPool(){
     {
         std::unique_lock<std::mutex> lock(_mutex);
         _stop = true;
     }
+
+    _cv.notify_all(); // 唤醒所有线程
 
     for(auto& worker : _workers){
         if(worker.joinable()){
