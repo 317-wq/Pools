@@ -23,8 +23,10 @@ class ThreadPool{
 public:
     using Task = std::function<void()>;
     using Clock = std::chrono::steady_clock;
-
-private:
+    struct WorkerInfo;
+    static thread_local WorkerInfo* tls_worker;
+    
+public:
     struct WorkerInfo{
         std::thread worker;
         std::deque<Task> tasks; // 尾部进行任务的steal
@@ -44,7 +46,7 @@ private:
 private:
     size_t _min_threads; // 最少线程数
     size_t _max_threads; // 最大线程数
-    std::vector<std::unique_ptr<WorkerInfo>> _workers; // 工作线程
+    std::vector<std::shared_ptr<WorkerInfo>> _workers; // 工作线程(shared_ptr支持安全的锁分离)
     std::atomic<size_t> _next_worker{0}; // 负载均衡[下一个工作对象的下标]
     std::thread _manager; // 监控线程池线程
     mutable std::mutex _mutex; // 保护任务队列[const函数中支持最小修改]
@@ -100,25 +102,40 @@ public:
         auto task = std::make_shared<std::packaged_task<ReturnType()>>(
             std::bind(std::forward<F>(f), std::forward<Args>(args)...)
         );
-        
+
+        // 避免线程池已经停止
+        if (_stop){
+            throw std::runtime_error("submit on stopped ThreadPool");
+        }
         std::future<ReturnType> future = task->get_future();
 
         // 应该将当前任务放到哪一个worker对象里面
-        size_t idx = _next_worker++ % _workers.size();
-        auto &worker = _workers[idx];
-        {
-            std::lock_guard<std::mutex> lock(worker->mutex);
+        WorkerInfo* current = tls_worker;
+        if (current){
+            std::lock_guard<std::mutex> lock(current->mutex);
 
-            if(_stop){
-                throw std::runtime_error("submit on stopped ThreadPool");
-            }
-
-            worker->tasks.emplace_back([task]{
+            current->tasks.emplace_back([task]{
                 (*task)();
             });
         }
 
-        _cv.notify_one(); // 唤醒任意一个线程
+        else{
+            // 锁分离：仅在全局锁内获取 shared_ptr 引用，释放后再锁单个 worker
+            std::shared_ptr<WorkerInfo> target;
+            {
+                std::lock_guard<std::mutex> lock(_worker_mutex);
+                size_t idx = _next_worker++ % _workers.size();
+                target = _workers[idx];  // shared_ptr 保证 worker 不会被销毁
+            }
+            {
+                std::lock_guard<std::mutex> glock(target->mutex);
+                target->tasks.emplace_back([task]{
+                    (*task)();
+                });
+            }
+        }
+
+        _cv.notify_one();
 
         return future;
     }
