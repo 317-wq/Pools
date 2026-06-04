@@ -1,7 +1,4 @@
 #include <iostream>
-#include <thread>
-#include <vector>
-
 #include "../include/memory_pool.h"
 
 struct Test
@@ -16,39 +13,21 @@ struct Test
 
 int main()
 {
-    MemoryPool pool(1000, sizeof(Test));
+    MemoryPool pool(2, sizeof(Test));
 
-    std::vector<std::thread> threads;
+    auto *p1 = pool.newObject<Test>(1);
+    auto *p2 = pool.newObject<Test>(2);
 
-    for(int i = 0; i < 8; ++i)
-    {
-        threads.emplace_back([&pool]()
-        {
-            for(int j = 0; j < 10000; ++j)
-            {
-                auto* obj =
-                    pool.newObject<Test>(j);
+    std::cout << pool.usedCount() << '\n';
 
-                if(obj)
-                {
-                    pool.deleteObject(obj);
-                }
-            }
-        });
-    }
+    auto *p3 = pool.newObject<Test>(3);
 
-    for(auto& t : threads)
-    {
-        t.join();
-    }
+    std::cout << pool.usedCount() << '\n';
 
-    std::cout
-        << "free = "
-        << pool.freeCount()
-        << std::endl;
+    pool.deleteObject(p1);
+    pool.deleteObject(p2);
+    pool.deleteObject(p3);
 
-    std::cout
-        << "used = "
-        << pool.usedCount()
-        << std::endl;
+    std::cout << pool.freeCount() << '\n';
+    std::cout << pool.totalBlockCount() << '\n';
 }
