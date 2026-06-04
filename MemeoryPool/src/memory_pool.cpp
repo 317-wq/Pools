@@ -9,6 +9,13 @@ size_t MemoryPool::alignUp(size_t size, size_t alignment)
     return (size + alignment - 1) & ~(alignment - 1);
 }
 
+// 是否是已分配的内存块
+bool MemoryPool::isAllocated(void* ptr)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _usedBlocks.find(ptr) != _usedBlocks.end();
+}
+
 // 大块内存扩容
 void MemoryPool::expand()
 {
@@ -45,8 +52,6 @@ void MemoryPool::expand()
 // 判断当前指针是否属于这个内存池 [但是无法避免二次deleteObj的情况,造成链表回环]
 bool MemoryPool::owns(void *ptr) const    
 {
-    std::lock_guard<std::mutex> lock(_mutex);
-    
     if(ptr == nullptr)
     {
         return false;
@@ -76,7 +81,8 @@ MemoryPool::MemoryPool(size_t blockCount, size_t blockSize)
     : _freeList(nullptr),
       _blockCount(blockCount),
       _freeCount(0),
-      _totalBlockCount(0)
+      _totalBlockCount(0),
+      _peakUsed(0)
 {
     if(blockCount == 0)
     {
@@ -98,6 +104,14 @@ MemoryPool::MemoryPool(size_t blockCount, size_t blockSize)
 // 只释放大块内存，碎片小内存会重复使用
 MemoryPool::~MemoryPool()
 {
+    // 确保使用的小块内存全部归还，避免造成内存泄漏，方便后面一次性销毁
+    if(!_usedBlocks.empty())
+    {
+        std::cerr << "[MemoryPool] Leak Detected" << std::endl;
+        std::cerr << "active blocks = " << _usedBlocks.size() << std::endl;
+    }
+
+    // 一次性销毁
     for(auto memory : _chunks)
     {
         std::free(memory);
@@ -118,6 +132,12 @@ void *MemoryPool::allocate()
 
     Block *block = _freeList;
 
+    _usedBlocks.insert(block); // 添加到使用内存块中
+    if (_usedBlocks.size() > _peakUsed)
+    {
+        _peakUsed = _usedBlocks.size();
+    }
+
     _freeList = _freeList->next;
 
     --_freeCount; // 空闲块数量减少
@@ -133,15 +153,25 @@ void MemoryPool::deallocate(void *ptr)
         return;
     }
 
+    std::lock_guard<std::mutex> lock(_mutex);
+
+    // 1、检查是否属于内存池
     if(!owns(ptr))
     {
         throw std::invalid_argument("pointer does not belong to memory pool");
     }
 
-    std::lock_guard<std::mutex> lock(_mutex);
+    // 2、看这个ptr是否存在于_usedBlocks,解决二次free问题
+    auto it = _usedBlocks.find(ptr);
+    if(it == _usedBlocks.end())
+    {
+        throw std::runtime_error("double free detected");   
+    }
+    _usedBlocks.erase(it);
+
     Block *block = static_cast<Block *>(ptr);
 
-    // 回收ptr指向的内存块，头插法归还，O(1)
+    // 3、回收ptr指向的内存块，头插法归还，O(1)
     block->next = _freeList;
 
     _freeList = block;

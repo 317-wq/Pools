@@ -31,6 +31,7 @@ private:
     size_t _totalBlockCount; // 整个内存池的小块内存数量
     mutable std::mutex _mutex; // 保护空闲内存块链表
     std::unordered_set<void*> _usedBlocks; // 已使用的内存块，解决二次free问题
+    size_t _peakUsed; // 小块内存使用峰值
 
 public:
     MemoryPool(size_t blockCount, size_t blockSize);
@@ -54,6 +55,9 @@ private:
     // 大块内存扩容
     void expand();
     
+    // 是否是已分配的内存块[是否允许回收]
+    bool isAllocated(void* ptr);
+
 public:
     // 利用已申请的内存块，直接在上面构造对象
     template<typename T, typename... Args>
@@ -82,6 +86,12 @@ public:
         if(!obj)
         {
             return;
+        }
+
+        // 看是否允许回收，避免二次调用对象的析构函数
+        if (!isAllocated(obj))
+        {
+            throw std::runtime_error("double free detected");
         }
 
         // 使用了定位new，需要显示调用销毁对象的析构操作
@@ -120,6 +130,12 @@ public:
     {
         std::lock_guard<std::mutex> lock(_mutex);
         return _totalBlockCount - _freeCount;
+    }
+
+    size_t peakUsed() const
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _peakUsed;
     }
 
 };
