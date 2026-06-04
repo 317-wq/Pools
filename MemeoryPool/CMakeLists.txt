@@ -8,3 +8,5 @@ set(CMAKE_CXX_STANDARD 17)
 add_executable(test
                 tests/test.cpp
                 src/memory_pool.cpp)
+
+target_link_libraries(test pthread)
