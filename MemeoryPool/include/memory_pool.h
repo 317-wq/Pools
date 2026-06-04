@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstddef>
+#include <new>
+#include <utility>
 
 /*
     内存池
@@ -32,13 +34,43 @@ public:
 
     ~MemoryPool();
 
-public:
-    // 分配一个内存块
+private:
+    // 分配一个内存块[相当于placement new，
+    // 之后在这块内促你上面直接构造对象，不需要重新申请内存]
     void *allocate();
 
     // 回收一个内存块
     void deallocate(void *ptr);
 
+public:
+    // 利用已申请的内存块，直接在上面构造对象
+    template<typename T, typename... Args>
+    T* newObject(Args&&... args)
+    {
+        void* memory = allocate();
+        if(!memory)
+        {
+            return nullptr;
+        }
+
+        // 定位new
+        return new(memory)T(std::forward<Args>(args)...);
+    }
+
+    // 销毁对象
+    template<typename T>
+    void deleteObject(T* obj)
+    {
+        if(!obj)
+        {
+            return;
+        }
+
+        // 使用了定位new，需要显示调用销毁对象的析构操作
+        obj->~T();
+        deallocate(obj); // 归还内存块
+    }
+    
 public:
     // 获取内存块数量
     size_t blockSize() const
