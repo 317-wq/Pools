@@ -1,43 +1,24 @@
 #include <iostream>
 #include "../include/memory_pool.h"
 
-struct Test
+struct BigObject
 {
-    int x;
-
-    Test(int v)
-        : x(v)
-    {
-        std::cout << "ctor\n";
-    }
-
-    ~Test()
-    {
-        std::cout << "dtor\n";
-    }
+    char data[1024];
 };
 
 int main()
 {
-    MemoryPool pool(2, sizeof(Test));
-
-    auto *obj1 = pool.newObject<Test>(100);
-
-    pool.deleteObject(obj1);
+    MemoryPool pool(10, 64);
 
     try
     {
-        int *p = new int(10);
-
-        pool.deleteObject(p);
+        auto* obj =
+            pool.newObject<BigObject>();
     }
-    catch (const std::exception &e)
+    catch(const std::exception& e)
     {
         std::cout
-            << "catch exception: "
             << e.what()
             << std::endl;
     }
-
-    return 0;
 }

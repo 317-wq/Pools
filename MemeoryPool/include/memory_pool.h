@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <new>
 #include <utility>
+#include <stdexcept>
 
 /*
     内存池
@@ -44,12 +45,18 @@ private:
 
     // 判断当前指针是否属于这个内存池，避免deleteObj两次，造成链表回环
     bool owns(void* ptr) const;
-    
+
 public:
     // 利用已申请的内存块，直接在上面构造对象
     template<typename T, typename... Args>
     T* newObject(Args&&... args)
     {
+        // 解决定位new带来的安全隐患，需要构造的对象大小远超过内存块大小
+        if (sizeof(T) > _blockSize)
+        {
+            throw std::runtime_error("object size exceeds block size");
+        }
+
         void* memory = allocate();
         if(!memory)
         {
