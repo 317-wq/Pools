@@ -4,6 +4,8 @@
 #include <new>
 #include <utility>
 #include <stdexcept>
+#include <mutex>
+
 
 /*
     内存池
@@ -25,6 +27,7 @@ private:
     size_t _blockCount; // 块数量
     size_t _blockSize; // 每个块大小
     size_t _freeCount; // 当前空闲内存块数量
+    mutable std::mutex _mutex; // 保护空闲内存块链表
 
 private:
     // 内存对齐函数
@@ -97,12 +100,14 @@ public:
     // 获取空闲内存块数量
     size_t freeCount() const
     {
+        std::lock_guard<std::mutex> lock(_mutex);
         return _freeCount;
     }
 
     // 获取已使用的内存块数量
     size_t usedCount() const
     {
+        std::lock_guard<std::mutex> lock(_mutex);
         return _blockCount - _freeCount;
     }
 

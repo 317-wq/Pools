@@ -10,7 +10,7 @@ size_t MemoryPool::alignUp(size_t size, size_t alignment)
 }
 
 // 判断当前指针是否属于这个内存池，避免deleteObj两次，造成链表回环
-bool MemoryPool::owns(void *ptr) const
+bool MemoryPool::owns(void *ptr) const    
 {
     if(ptr == nullptr)
     {
@@ -80,6 +80,8 @@ MemoryPool::~MemoryPool()
 // 分配内存块
 void *MemoryPool::allocate()
 {
+    std::lock_guard<std::mutex> lock(_mutex);
+
     // 内存池使用完
     if (_freeList == nullptr)
     {
@@ -107,7 +109,8 @@ void MemoryPool::deallocate(void *ptr)
     {
         throw std::invalid_argument("pointer does not belong to memory pool");
     }
-    
+
+    std::lock_guard<std::mutex> lock(_mutex);
     Block *block = static_cast<Block *>(ptr);
 
     // 回收ptr指向的内存块，头插法归还，O(1)

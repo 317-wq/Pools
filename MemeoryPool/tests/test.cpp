@@ -1,24 +1,54 @@
 #include <iostream>
+#include <thread>
+#include <vector>
+
 #include "../include/memory_pool.h"
 
-struct BigObject
+struct Test
 {
-    char data[1024];
+    int value;
+
+    Test(int v)
+        : value(v)
+    {
+    }
 };
 
 int main()
 {
-    MemoryPool pool(10, 64);
+    MemoryPool pool(1000, sizeof(Test));
 
-    try
+    std::vector<std::thread> threads;
+
+    for(int i = 0; i < 8; ++i)
     {
-        auto* obj =
-            pool.newObject<BigObject>();
+        threads.emplace_back([&pool]()
+        {
+            for(int j = 0; j < 10000; ++j)
+            {
+                auto* obj =
+                    pool.newObject<Test>(j);
+
+                if(obj)
+                {
+                    pool.deleteObject(obj);
+                }
+            }
+        });
     }
-    catch(const std::exception& e)
+
+    for(auto& t : threads)
     {
-        std::cout
-            << e.what()
-            << std::endl;
+        t.join();
     }
+
+    std::cout
+        << "free = "
+        << pool.freeCount()
+        << std::endl;
+
+    std::cout
+        << "used = "
+        << pool.usedCount()
+        << std::endl;
 }
