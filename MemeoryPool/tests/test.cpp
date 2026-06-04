@@ -1,56 +1,43 @@
+#include <iostream>
 #include "../include/memory_pool.h"
 
-#include <iostream>
-#include <string>
-
-class User
+struct Test
 {
-public:
-    User(int id,
-         const std::string& name)
-        : _id(id),
-          _name(name)
+    int x;
+
+    Test(int v)
+        : x(v)
     {
-        std::cout
-            << "User ctor\n";
+        std::cout << "ctor\n";
     }
 
-    ~User()
+    ~Test()
     {
-        std::cout
-            << "User dtor\n";
+        std::cout << "dtor\n";
     }
-
-    void print() const
-    {
-        std::cout
-            << _id
-            << " "
-            << _name
-            << '\n';
-    }
-
-private:
-    int _id;
-    std::string _name;
 };
 
 int main()
 {
-    MemoryPool pool(
-        10,
-        sizeof(User)
-    );
+    MemoryPool pool(2, sizeof(Test));
 
-    User* user =
-        pool.newObject<User>(
-            1001,
-            "freedom"
-        );
+    auto *obj1 = pool.newObject<Test>(100);
 
-    user->print();
+    pool.deleteObject(obj1);
 
-    pool.deleteObject(user);
+    try
+    {
+        int *p = new int(10);
+
+        pool.deleteObject(p);
+    }
+    catch (const std::exception &e)
+    {
+        std::cout
+            << "catch exception: "
+            << e.what()
+            << std::endl;
+    }
 
     return 0;
 }

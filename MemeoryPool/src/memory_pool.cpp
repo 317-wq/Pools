@@ -9,6 +9,31 @@ size_t MemoryPool::alignUp(size_t size, size_t alignment)
     return (size + alignment - 1) & ~(alignment - 1);
 }
 
+// 判断当前指针是否属于这个内存池，避免deleteObj两次，造成链表回环
+bool MemoryPool::owns(void *ptr) const
+{
+    if(ptr == nullptr)
+    {
+        return false;
+    }
+
+    char* p = static_cast<char*>(ptr);
+
+    char* begin = _memory;
+    char* end = _memory + _blockCount * _blockSize;
+
+    // 是否落在内存池范围内
+    if(p < begin || p >= end)
+    {
+        return false;
+    }
+
+    // 是否正好位于块起始地址，因为从内存池分配的都是块的起始，避免了野指针的可能
+    size_t offset = p - begin;
+
+    return offset % _blockSize == 0;
+}
+
 MemoryPool::MemoryPool(size_t blockCount, size_t blockSize)
     : _freeList(nullptr),
       _memory(nullptr),
@@ -78,6 +103,11 @@ void MemoryPool::deallocate(void *ptr)
         return;
     }
 
+    if(!owns(ptr))
+    {
+        throw std::invalid_argument("pointer does not belong to memory pool");
+    }
+    
     Block *block = static_cast<Block *>(ptr);
 
     // 回收ptr指向的内存块，头插法归还，O(1)

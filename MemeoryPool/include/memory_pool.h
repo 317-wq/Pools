@@ -42,6 +42,9 @@ private:
     // 回收一个内存块
     void deallocate(void *ptr);
 
+    // 判断当前指针是否属于这个内存池，避免deleteObj两次，造成链表回环
+    bool owns(void* ptr) const;
+    
 public:
     // 利用已申请的内存块，直接在上面构造对象
     template<typename T, typename... Args>
@@ -70,7 +73,7 @@ public:
         obj->~T();
         deallocate(obj); // 归还内存块
     }
-    
+
 public:
     // 获取内存块数量
     size_t blockSize() const
