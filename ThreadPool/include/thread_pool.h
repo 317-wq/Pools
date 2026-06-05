@@ -49,8 +49,7 @@ private:
     std::vector<std::shared_ptr<WorkerInfo>> _workers; // 工作线程(shared_ptr支持安全的锁分离)
     std::atomic<size_t> _next_worker{0}; // 负载均衡[下一个工作对象的下标]
     std::thread _manager; // 监控线程池线程
-    mutable std::mutex _mutex; // 保护任务队列[const函数中支持最小修改]
-    mutable std::mutex _worker_mutex; // 保护工作线程统计[const函数中支持最小修改]
+    mutable std::mutex _worker_mutex; // 保护工作线程统计和任务队列
     std::condition_variable _cv; // 条件变量，线程同步
     std::atomic<bool> _stop{false}; // 线程池停止标记[确保在锁内操作]
 
