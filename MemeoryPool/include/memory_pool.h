@@ -23,8 +23,27 @@ private:
     };
 
 private:
+    struct Chunk
+    {
+        char *memory;
+        size_t blockCount;
+        size_t usedCount;
+        Chunk()
+            : memory(nullptr),
+              blockCount(0),
+              usedCount(0)
+        {}
+
+        Chunk(char *mem, size_t blocks)
+            : memory(mem),
+              blockCount(blocks),
+              usedCount(0)
+        {}
+    };
+
+private:
     Block *_freeList; // 空闲链表头
-    std::vector<char *> _chunks; // 整块内存起始地址 -> 可扩容内存池
+    std::vector<Chunk> _chunks; // 整块内存起始地址 -> 可扩容内存池
     size_t _blockCount; // 每个大块内存分成几个小块内存
     size_t _blockSize; // 每个大块内存中的小块内存单独大小
     size_t _freeCount; // 内存池中空闲小块内存的数量
@@ -88,13 +107,41 @@ public:
             return;
         }
 
-        // 看是否允许回收，避免二次调用对象的析构函数
-        if (!isAllocated(obj))
+        // 原子地检查所有权并从已使用集合中移除，避免 TOCTOU 竞态
         {
-            throw std::runtime_error("double free detected");
+            std::lock_guard<std::mutex> lock(_mutex);
+
+            // 检查指针是否属于本内存池
+            if (!owns(obj))
+            {
+                throw std::invalid_argument("pointer does not belong to memory pool");
+            }
+
+            // 看是否允许回收，避免二次调用对象的析构函数
+            auto it = _usedBlocks.find(obj);
+            if (it == _usedBlocks.end())
+            {
+                throw std::runtime_error("double free detected");
+            }
+            _usedBlocks.erase(it); // 将删除操作放在锁内，避免其他函数操作的资源竞态，导致二次析构
+
+            // 递减对应大块内存中的小块内存使用计数
+            for (auto &chunk : _chunks)
+            {
+                char *begin = chunk.memory;
+                char *end = begin + chunk.blockCount * _blockSize;
+
+                if (reinterpret_cast<char *>(obj) >= begin &&
+                    reinterpret_cast<char *>(obj) < end)
+                {
+                    --chunk.usedCount;
+                    break;
+                }
+            }
         }
 
         // 使用了定位new，需要显示调用销毁对象的析构操作
+        // 析构在锁外执行，避免用户析构函数中可能的死锁
         obj->~T();
         deallocate(obj); // 归还内存块
     }
@@ -102,6 +149,9 @@ public:
 public:
     // 内存收缩，避免流量的不同造成内存的占用，避免抖动
     void shrink();
+    
+    // 统计接口
+    void dumpChunks() const;
 
 public:
     // 获取每个大块内存分成几个小块内存

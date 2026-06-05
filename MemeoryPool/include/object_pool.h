@@ -33,6 +33,11 @@ public:
     {
         _memoryPool.shrink();
     }
+    
+    void dumpChunks() const
+    {
+        _memoryPool.dumpChunks();
+    }
 
 public:
     size_t freeCount() const

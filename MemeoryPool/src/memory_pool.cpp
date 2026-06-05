@@ -27,7 +27,7 @@ void MemoryPool::expand()
         throw std::bad_alloc();
     }
 
-    _chunks.push_back(memory);
+    _chunks.emplace_back(memory, _blockCount);
 
     Block *first =reinterpret_cast<Block *>(memory);
 
@@ -58,43 +58,85 @@ void MemoryPool::shrink()
     {
         return;
     }
-    // 其他大块内存还有被使用中的小块内存
-    if (!_usedBlocks.empty())
+    
+    // 检查除第一块外的其他大块内存是否还有被使用中的小块内存
+    bool canShrink = true;
+    for (size_t i = 1; i < _chunks.size(); ++i)
+    {
+        if (_chunks[i].usedCount > 0)
+        {
+            canShrink = false;
+            break;
+        }
+    }
+    if (!canShrink)
     {
         return;
     }
 
-    char *firstChunk = _chunks.front();
+    char *firstChunk = _chunks.front().memory;
     // 释放剩余内存空间
     for (size_t i = 1; i < _chunks.size(); ++i)
     {
-        std::free(_chunks[i]);
+        std::free(_chunks[i].memory);
     }
 
-    // 将首块内存的初始状态还原 -> 内存归还的顺序可能不是连续的物理地址
-    _chunks.clear();
+    // 只保留第一块大块内存
+    size_t freedChunks = _chunks.size() - 1;
+    _chunks.resize(1);
 
-    _chunks.push_back(firstChunk);
+    // 重新构建空闲链表，仅使用第一块大块内存中未被占用的块[物理地址连续]
+    _freeList = nullptr;
 
-    _freeList = reinterpret_cast<Block *>(firstChunk);
-
-    Block *current = _freeList;
-    // 重新分配
-    for (size_t i = 0; i < _blockCount - 1; ++i)
+    size_t freeInFirstChunk = 0;
+    for (size_t i = 0; i < _blockCount; ++i)
     {
-        current->next = reinterpret_cast<Block *>(firstChunk + (i + 1) * _blockSize);
-        current = current->next;
+        Block *block = reinterpret_cast<Block *>(firstChunk + i * _blockSize);
+        if (_usedBlocks.find(block) == _usedBlocks.end())
+        {
+            block->next = _freeList;
+            _freeList = block;
+            ++freeInFirstChunk;
+        }
     }
-
-    current->next = nullptr; // 只有一个块，最后指向的就是nullptr
 
     _totalBlockCount = _blockCount;
 
-    _freeCount = _blockCount;
+    _freeCount = freeInFirstChunk;
+}
+
+// 统计
+void MemoryPool::dumpChunks() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+
+    std::cout
+        << "========== Chunks =========="
+        << std::endl;
+
+    for (size_t i = 0; i < _chunks.size(); ++i)
+    {
+        const auto &chunk = _chunks[i];
+
+        std::cout
+            << "Chunk["
+            << i
+            << "] "
+            << " blocks="
+            << chunk.blockCount
+            << " used="
+            << chunk.usedCount
+            << std::endl;
+    }
+
+    std::cout
+        << "============================"
+        << std::endl;
 }
 
 // 判断当前指针是否属于这个内存池 [但是无法避免二次deleteObj的情况,造成链表回环]
-bool MemoryPool::owns(void *ptr) const    
+// 注意：调用者必须已持有 _mutex 锁
+bool MemoryPool::owns(void *ptr) const
 {
     if(ptr == nullptr)
     {
@@ -104,10 +146,10 @@ bool MemoryPool::owns(void *ptr) const
     char* p = static_cast<char*>(ptr);
 
     // 遍历所有的大块内存进行检查
-    for (auto memory : _chunks)
+    for (const auto& chunk : _chunks)
     {
-        char *begin = memory;
-        char *end = memory + _blockCount * _blockSize;
+        char *begin = chunk.memory;
+        char *end = chunk.memory + chunk.blockCount * _blockSize;
 
         // 是否落在该大块内存范围内
         if (p >= begin && p < end)
@@ -156,9 +198,9 @@ MemoryPool::~MemoryPool()
     }
 
     // 一次性销毁
-    for(auto memory : _chunks)
+    for(auto& chunk : _chunks)
     {
-        std::free(memory);
+        std::free(chunk.memory);
     }
 }
 
@@ -186,10 +228,25 @@ void *MemoryPool::allocate()
 
     --_freeCount; // 空闲块数量减少
 
+    // 找到block属于哪一个大块内存，进行计数
+    for (auto &chunk : _chunks)
+    {
+        char *begin = chunk.memory;
+
+        char *end = begin + chunk.blockCount * _blockSize;
+
+        if (reinterpret_cast<char *>(block) >= begin &&
+            reinterpret_cast<char *>(block) < end)
+        {
+            ++chunk.usedCount;
+            break;
+        }
+    }
+
     return block;
 }
 
-// 回收内存块
+// 回收内存块[将内存块归还到空闲链表，调用者必须已从 _usedBlocks 中移除并递减了 chunk.usedCount]
 void MemoryPool::deallocate(void *ptr)
 {
     if (ptr == nullptr)
@@ -199,23 +256,9 @@ void MemoryPool::deallocate(void *ptr)
 
     std::lock_guard<std::mutex> lock(_mutex);
 
-    // 1、检查是否属于内存池
-    if(!owns(ptr))
-    {
-        throw std::invalid_argument("pointer does not belong to memory pool");
-    }
-
-    // 2、看这个ptr是否存在于_usedBlocks,解决二次free问题
-    auto it = _usedBlocks.find(ptr);
-    if(it == _usedBlocks.end())
-    {
-        throw std::runtime_error("double free detected");   
-    }
-    _usedBlocks.erase(it);
-
     Block *block = static_cast<Block *>(ptr);
 
-    // 3、回收ptr指向的内存块，头插法归还，O(1)
+    // 头插法归还，O(1)
     block->next = _freeList;
 
     _freeList = block;
