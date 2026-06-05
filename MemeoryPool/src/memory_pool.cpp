@@ -9,13 +9,6 @@ size_t MemoryPool::alignUp(size_t size, size_t alignment)
     return (size + alignment - 1) & ~(alignment - 1);
 }
 
-// 是否是已分配的内存块
-bool MemoryPool::isAllocated(void* ptr)
-{
-    std::lock_guard<std::mutex> lock(_mutex);
-    return _usedBlocks.find(ptr) != _usedBlocks.end();
-}
-
 // 大块内存扩容
 void MemoryPool::expand()
 {
@@ -58,7 +51,7 @@ void MemoryPool::shrink()
     {
         return;
     }
-    
+
     // 检查除第一块外的其他大块内存是否还有被使用中的小块内存
     bool canShrink = true;
     for (size_t i = 1; i < _chunks.size(); ++i)

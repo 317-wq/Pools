@@ -73,9 +73,6 @@ private:
 
     // 大块内存扩容
     void expand();
-    
-    // 是否是已分配的内存块[是否允许回收]
-    bool isAllocated(void* ptr);
 
 public:
     // 利用已申请的内存块，直接在上面构造对象
