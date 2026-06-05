@@ -86,6 +86,9 @@ cd build && make && ./test
 
 # TPS/QPS 压力测试
 ./stress_test
+
+# 模拟 Web 服务器并发请求处理测试
+./example
 ```
 
 ## 项目结构
@@ -94,6 +97,7 @@ cd build && make && ./test
 ThreadPool/
 ├── include/thread_pool.h   # 头文件
 ├── src/thread_pool.cpp      # 实现
+├── examples/example.cpp    # 模拟 Web 服务器并发请求处理
 ├── tests/
 │   ├── test.cpp             # 基础测试
 │   └── stress_test.cpp      # 压力测试
