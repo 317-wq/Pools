@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_FLAGS_RELEASE "-O2 -DNDEBUG")
 set(CMAKE_CXX_FLAGS_DEBUG   "-O0 -g")
 
-# 原始基础测试
+# 单元测试
 add_executable(test
                 tests/test.cpp
                 src/thread_pool.cpp)
@@ -16,5 +16,11 @@ add_executable(stress_test
                 tests/stress_test.cpp
                 src/thread_pool.cpp)
 
+# 场景示例
+add_executable(example
+                examples/example.cpp
+                src/thread_pool.cpp)
+
 target_link_libraries(test pthread)
 target_link_libraries(stress_test pthread)
+target_link_libraries(example pthread)
