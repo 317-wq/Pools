@@ -49,6 +49,50 @@ void MemoryPool::expand()
     _freeCount += _blockCount;
 }
 
+// 内存收缩，避免流量的不同造成内存的占用，避免抖动
+void MemoryPool::shrink()
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    // 只保留第一块大块内存
+    if (_chunks.size() <= 1)
+    {
+        return;
+    }
+    // 其他大块内存还有被使用中的小块内存
+    if (!_usedBlocks.empty())
+    {
+        return;
+    }
+
+    char *firstChunk = _chunks.front();
+    // 释放剩余内存空间
+    for (size_t i = 1; i < _chunks.size(); ++i)
+    {
+        std::free(_chunks[i]);
+    }
+
+    // 将首块内存的初始状态还原 -> 内存归还的顺序可能不是连续的物理地址
+    _chunks.clear();
+
+    _chunks.push_back(firstChunk);
+
+    _freeList = reinterpret_cast<Block *>(firstChunk);
+
+    Block *current = _freeList;
+    // 重新分配
+    for (size_t i = 0; i < _blockCount - 1; ++i)
+    {
+        current->next = reinterpret_cast<Block *>(firstChunk + (i + 1) * _blockSize);
+        current = current->next;
+    }
+
+    current->next = nullptr; // 只有一个块，最后指向的就是nullptr
+
+    _totalBlockCount = _blockCount;
+
+    _freeCount = _blockCount;
+}
+
 // 判断当前指针是否属于这个内存池 [但是无法避免二次deleteObj的情况,造成链表回环]
 bool MemoryPool::owns(void *ptr) const    
 {

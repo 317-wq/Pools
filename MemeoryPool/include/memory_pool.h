@@ -75,7 +75,7 @@ public:
             return nullptr;
         }
 
-        // 定位new
+        // 定位new -> new(address)typename(args)
         return new(memory)T(std::forward<Args>(args)...);
     }
 
@@ -98,6 +98,10 @@ public:
         obj->~T();
         deallocate(obj); // 归还内存块
     }
+
+public:
+    // 内存收缩，避免流量的不同造成内存的占用，避免抖动
+    void shrink();
 
 public:
     // 获取每个大块内存分成几个小块内存
