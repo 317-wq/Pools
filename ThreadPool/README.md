@@ -1,5 +1,8 @@
 # C++ ThreadPool
 
+[![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)](https://en.cppreference.com/w/cpp/17)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 高性能 C++17 线程池，支持**自适应扩缩容**和**工作窃取**。
 
 ## 特性
