@@ -71,6 +71,9 @@ private:
     // 判断当前指针是否属于这个内存池，避免deleteObj两次，造成链表回环
     bool owns(void* ptr) const;
 
+    // 定位指针所属的大块内存（调用者必须持有 _mutex），O(log n) 二分查找
+    Chunk* findChunk(void* ptr);
+
     // 大块内存扩容
     void expand();
 
@@ -122,18 +125,11 @@ public:
             }
             _usedBlocks.erase(it); // 将删除操作放在锁内，避免其他函数操作的资源竞态，导致二次析构
 
-            // 递减对应大块内存中的小块内存使用计数
-            for (auto &chunk : _chunks)
+            // 递减对应大块内存中的小块内存使用计数 O(log n)
+            Chunk *chunk = findChunk(obj);
+            if (chunk)
             {
-                char *begin = chunk.memory;
-                char *end = begin + chunk.blockCount * _blockSize;
-
-                if (reinterpret_cast<char *>(obj) >= begin &&
-                    reinterpret_cast<char *>(obj) < end)
-                {
-                    --chunk.usedCount;
-                    break;
-                }
+                --chunk->usedCount;
             }
         }
 

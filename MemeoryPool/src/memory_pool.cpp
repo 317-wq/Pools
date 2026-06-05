@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <algorithm>
 
 // 内存对齐函数[将size取整到alignment的最小整数倍]
 size_t MemoryPool::alignUp(size_t size, size_t alignment)
@@ -20,7 +21,13 @@ void MemoryPool::expand()
         throw std::bad_alloc();
     }
 
-    _chunks.emplace_back(memory, _blockCount);
+    // 保持 chunks 按内存地址排序，支持 O(log n) 二分查找定位
+    Chunk newChunk(memory, _blockCount);
+    auto pos = std::lower_bound(_chunks.begin(), _chunks.end(), memory,
+        [](const Chunk &chunk, const char *addr) {
+            return chunk.memory < addr;
+        });
+    _chunks.insert(pos, newChunk);
 
     Block *first =reinterpret_cast<Block *>(memory);
 
@@ -127,6 +134,38 @@ void MemoryPool::dumpChunks() const
         << std::endl;
 }
 
+// 定位指针所属的大块内存（调用者必须持有 _mutex），O(log n) 二分查找
+MemoryPool::Chunk* MemoryPool::findChunk(void* ptr)
+{
+    if (ptr == nullptr || _chunks.empty())
+    {
+        return nullptr;
+    }
+
+    char* p = static_cast<char*>(ptr);
+
+    // 二分查找：chunks 按 memory 地址排序
+    auto it = std::upper_bound(_chunks.begin(), _chunks.end(), p,
+        [](const char* addr, const Chunk& chunk) {
+            return addr < chunk.memory;
+        });
+
+    if (it == _chunks.begin())
+    {
+        return nullptr; // 指针在所有 chunk 之前
+    }
+
+    --it;
+    char* begin = it->memory;
+    char* end = begin + it->blockCount * _blockSize;
+
+    if (p >= begin && p < end)
+    {
+        return &(*it);
+    }
+    return nullptr;
+}
+
 // 判断当前指针是否属于这个内存池 [但是无法避免二次deleteObj的情况,造成链表回环]
 // 注意：调用者必须已持有 _mutex 锁
 bool MemoryPool::owns(void *ptr) const
@@ -136,24 +175,18 @@ bool MemoryPool::owns(void *ptr) const
         return false;
     }
 
-    char* p = static_cast<char*>(ptr);
-
-    // 遍历所有的大块内存进行检查
-    for (const auto& chunk : _chunks)
+    // 复用 findChunk 的二分查找逻辑
+    // const_cast: findChunk 返回非 const 指针，但 owns 是 const 方法，这里仅用于判断归属
+    Chunk* chunk = const_cast<MemoryPool*>(this)->findChunk(ptr);
+    if (chunk == nullptr)
     {
-        char *begin = chunk.memory;
-        char *end = chunk.memory + chunk.blockCount * _blockSize;
-
-        // 是否落在该大块内存范围内
-        if (p >= begin && p < end)
-        {
-            // 是否正好位于块起始地址，因为从内存池分配的都是块的起始，避免了野指针的可能
-            size_t offset = p - begin;
-
-            return offset % _blockSize == 0;
-        }
+        return false;
     }
-    return false;
+
+    // 是否正好位于块起始地址，因为从内存池分配的都是块的起始，避免了野指针的可能
+    char* p = static_cast<char*>(ptr);
+    size_t offset = p - chunk->memory;
+    return offset % _blockSize == 0;
 }
 
 MemoryPool::MemoryPool(size_t blockCount, size_t blockSize)
@@ -221,19 +254,11 @@ void *MemoryPool::allocate()
 
     --_freeCount; // 空闲块数量减少
 
-    // 找到block属于哪一个大块内存，进行计数
-    for (auto &chunk : _chunks)
+    // 定位 block 属于哪一个大块内存，进行计数 O(log n)
+    Chunk *chunk = findChunk(block);
+    if (chunk)
     {
-        char *begin = chunk.memory;
-
-        char *end = begin + chunk.blockCount * _blockSize;
-
-        if (reinterpret_cast<char *>(block) >= begin &&
-            reinterpret_cast<char *>(block) < end)
-        {
-            ++chunk.usedCount;
-            break;
-        }
+        ++chunk->usedCount;
     }
 
     return block;
