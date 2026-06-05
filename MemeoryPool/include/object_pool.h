@@ -29,6 +29,12 @@ public:
     }
 
 public:
+    void shrink()
+    {
+        _memoryPool.shrink();
+    }
+
+public:
     size_t freeCount() const
     {
         return _memoryPool.freeCount();
