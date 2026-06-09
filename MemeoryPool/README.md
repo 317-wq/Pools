@@ -200,7 +200,3 @@ make -j$(nproc)
 - [ ] Thread-local Cache（每个线程缓存一批 Block）
 - [ ] 支持 `std::allocator` 接口（可直接用于 STL 容器）
 - [ ] ASAN/Valgrind 集成
-
-## License
-
-MIT
